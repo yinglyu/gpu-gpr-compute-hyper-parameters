@@ -128,8 +128,7 @@ void print_array(double * array, int n)
 {
     for (int i = 0; i < n; i++)
     {
-        printf("%.2f", array[i]);
-        printf(" ");
+        printf("%.2f ", array[i]);
     }
     printf("\n");
 }
@@ -138,13 +137,12 @@ void print_matrix(double * matrix, int m, int n)
 {
     for (int i = 0; i < m; i++)
     {
-        printf("\n");
         for (int j = 0; j < n; j++)
         {
             printf("%.2f ", matrix[i*m + j]);
         }
+        printf("\n");
     }
-    printf("\n\n");
 }
 
 int main(int argc, char** argv) 
@@ -154,14 +152,11 @@ int main(int argc, char** argv)
 	double * hGx;  // host grid x-coordinate array
 	double * hGy;  // host grid y-coordinate array
 	double * hA;  // host tI+K
-	double * hLU; // host LU factorization of A
-	
+	//double * hLU; // host LU factorization of A
 	
 	double * hf;// host observed data vector f
 	double * hk;// host vector k
 	double * hz;// host triangular systems solution
-
-    
 
 	// Grid size m, grid points n
     int m = 4, n;
@@ -171,9 +166,8 @@ int main(int argc, char** argv)
     rstar = (double *) malloc(2 * sizeof(double));
     
     // Timing variables
-    float LU_time, solver_time, total_time, LU_floats, solver_floats;
+    float LU_time, solver_time, total_time, LU_floats, solver_floats, LU_FLOPS, solver_FLOPS;
     struct timespec cpu_start, cpu_stop; // CPU timing variables
-    float time_array[10];
 
     // Other variables
     double fstar;
@@ -202,9 +196,8 @@ int main(int argc, char** argv)
     hz = (double *) malloc(size);
     size = n * n * sizeof(double);
     hA = (double *) malloc(size);
-    hLU = (double *) malloc(size);
+    //hLU = (double *) malloc(size);
     printf("Allocate host coordinate arrays\n");
-
     
     init_grid_points(hGx, hGy, m);
     printf("x and y coordinates of grid points\n");
@@ -224,28 +217,30 @@ int main(int argc, char** argv)
     printf("compute_k\n");
     print_array(hk, n);
     
-    
-    // double n = XY.size();
-    // LU_floats = n*(n-1)*(4*n+1)/6;
-    // solver_floats = n*(4+n);
-    // start = omp_get_wtime();
+    double N = (double) n;
+    LU_floats = N*(N-1)*(4*N+1)/6;
+    solver_floats = N*(4+N);
     clock_gettime(CLOCK_REALTIME, &cpu_start);
     
     compute_LU_factors(hA, n); //LU factorization of A
-    printf("LU factorization of A\n");
-    clock_gettime(CLOCK_REALTIME, &cpu_stop);
+   clock_gettime(CLOCK_REALTIME, &cpu_stop);
     LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
-    
+    LU_FLOPS = LU_floats/LU_time;
+    printf("LU factorization of A\n");
+    printf("LU_FLOPS = %f\n", LU_FLOPS);
     print_matrix(hA, n, n);
  
     clock_gettime(CLOCK_REALTIME, &cpu_start); 
     solve_triangular_systems(hz, hA, hf, n);
     clock_gettime(CLOCK_REALTIME, &cpu_stop);
     solver_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
-    total_time = LU_time + solver_time;
+    solver_FLOPS = solver_floats/solver_time;
     printf("solve_triangular_systems\n");
-     print_array(hz, n);
+    printf("solver_FLOPS = %f\n", solver_FLOPS);
+    print_array(hz, n);
     
+    total_time = LU_time + solver_time;
+     
     fstar = compute_fstar(hk, hz, n);
     printf("Total time = %lf seconds, Predicted value = %lf\n", total_time, fstar);
 
