@@ -1,97 +1,88 @@
-#include <iostream>
-#include <vector>
+#include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <math.h>
-#include <omp.h>
-using namespace std;
 
-void print_array(vector<double> &array);
-void print_matrix(vector<vector<double>> &matrix);
 
-vector<vector<double>> init_grid_points(int m)
+void init_grid_points(double * x, double * y, int m)
 {
     double h = (double)1/(m + 1);
-    vector<vector<double>> points;
-    for (int i = 1; i <= m; i ++)
+    for (int i = 0; i < m; i ++)
     {
-        for (int j = 1; j <= m; j ++)
+        for (int j = 0; j < m; j ++)
         {
-            vector<double> point;
-            point.push_back(i*h);
-            point.push_back(j*h);
-            points.push_back(point);
+            x[i*m+j] = (i + 1)*h;
+            y[i*m+j] = (j + 1)*h;
         }
     }
-    return points;
 }
 
-vector<double> init_observed_data_vector(vector<vector<double>> XY)
+void init_observed_data_vector(double * f, double * x, double * y, int size)
 {
-    vector<double> f(XY.size(), 0);
-    # pragma omp parallel default(shared)
-    # pragma omp for
-    for (size_t i = 0; i < f.size(); i++)
+    for (int i = 0; i < size; i++)
     {
-        f[i] = 1.0 - pow(XY[i][0] - 0.5, 2) - pow(XY[i][1] - 0.5, 2) + 0.1 * (drand48() - 0.5);
+        f[i] = 1.0 - pow(x[i] - 0.5, 2) - pow(y[i] - 0.5, 2) + 0.1 * (drand48() - 0.5);
     }
-    return f;
 }
 
-vector<vector<double>> compute_A(vector<vector<double>> &XY)
+void compute_A( double * A, double * x, double * y, int n)
 {
-    int n = XY.size();
-    vector<vector<double>> A(n, vector<double>(n, 0));
     int i, j;
     double d, t;
     //Initialize K
-    # pragma omp parallel proc_bind(close) shared(XY, A) private(i, j, d)
+    for (i = 0; i < n; i ++)
     {
-        # pragma omp for collapse(2)
-        for (i = 0; i < n; i ++)
+        for (j = 0; j < n; j++)
         {
-            for (j = 0; j < n; j++)
-            {
-                d = pow(XY[i][0] - XY[j][0], 2) + pow(XY[i][1] - XY[j][1],2);
-                A[i][j] = exp(-d);
-            }
-        }
-        //Compute A = tI+K
-        t = 0.01;
-        # pragma omp for
-        for (i = 0; i < n; i ++)
-        {
-            A[i][i] += t;
+            d = pow(x[i] - x[j], 2) + pow(y[i] - y[j],2);
+            A[i*n + j] = exp(-d);
         }
     }
-    return A;
+    //Compute A = tI+K
+    t = 0.01;
+    for (i = 0; i < n; i ++)
+    {
+        A[i*n + i] += t;
+    }
 }
 
-vector<vector<double>> compute_LU_factors(vector<vector<double>> A)
+void compute_k(double * k, double * x, double * y, double * rstar, int n)
 {
-    int n = A.size();
+    int i; 
+    double d;
+    for (i = 0; i < n; i ++)
+    {
+        d = pow(rstar[0]-x[i], 2) + pow(rstar[1]-y[i], 2);
+        k[i] = exp(-d);
+    }
+}
+
+void compute_LU_factors(double * A, int n)
+{
     int k, i, j;
     double m;
+    // for (i = 0; i < n; i ++){
+    //     LU[i * n] = A[i * n];
+    //     LU[i] = A[i];
+    // }
+
     for (k = 0; k < n - 1; k ++)
     {
-        # pragma omp parallel for shared(A) private(i, j, m) proc_bind(close) 
+        // # pragma omp parallel for shared(A) private(i, j, m) proc_bind(close) 
         for (i = k + 1; i < n; i ++)
         {
-            m = A[i][k] / A[k][k];
+            m = A[i*n + k] / A[k*n + k];
             for (j = k + 1; j < n; j ++)
             {
-                A[i][j] -= m * A[k][j];
+                A[i*n + j] = A[i*n + j] - m * A[k*n + j];
             }
-            A[i][k] = m;
+            A[i*n + k] = m;
         }
     }
-    return A;
 }
 
-vector<double> solve_triangular_systems(vector<vector<double>> A, vector<double> f)
+void solve_triangular_systems(double * z, double * A, double * f, int n)
 {
-    int n = A.size();
-    vector<double> y(n, 0);
-    vector<double> z(n, 0);
     int i, j;
     double m; 
     //Solve Az = f by LUz = f
@@ -99,64 +90,32 @@ vector<double> solve_triangular_systems(vector<vector<double>> A, vector<double>
     for (i = 0; i < n; i ++)
     {
         m = 0;
-        int chunk = i/omp_get_num_threads();
-        # pragma omp parallel default(shared) proc_bind(close)
-        {
-        # pragma omp for private(j) reduction(+:m) schedule(static, chunk)
         for (j = 0; j < i; j ++)
         {
-            m += A[i][j] * y[j];
-        }
+            m += A[i*n + j] * z[j];
         }
 
-        y[i] = f[i] - m;
+        z[i] = f[i] - m;
     }
-    //cout << "y:" << endl;
-    //print_array(y);
     
     //2. Solve Uz = y for z
     for (i = n - 1; i >= 0; i --)
     {
         m = 0;
-        int chunk = (n-i)/omp_get_num_threads();
-        # pragma omp parallel default(shared) proc_bind(close)
-        {
-        # pragma omp for private(j) reduction(+:m) schedule(static, chunk)
         for (j = i + 1; j < n; j ++)
         {
-            m += A[i][j] * z[j];
+            m += A[i*n + j] * z[j];
         }
-        }
-        z[i] = (y[i]-m)/A[i][i];
+        z[i] = (z[i]-m)/A[i*n + i];
         
     }
-    //cout << "z:" << endl; 
-    //print_array(z);   
-    return z;
 }
 
-vector<double> compute_k(vector<vector<double>> &XY, vector<double> &rstar)
+double compute_fstar(double * k, double * z, int n)
 {
-    int i, n = XY.size(); 
-    vector<double> k(n, 0);
-    double d;
-    # pragma omp parallel for default(shared) private(i, d)
-    for (i = 0; i < n; i ++)
-    {
-        d = pow(rstar[0]-XY[i][0], 2) + pow(rstar[1]-XY[i][1], 2);
-        k[i] = exp(-d);
-    }
-    //cout << "k:" << endl;
-    //print_array(k);
-    return k; 
-}
-
-double compute_fstar(vector<double> &k, vector<double> &z)
-{
-    size_t i, n = k.size();
+    int i;
     double fstar = 0.0;
     // Compute predicted value fstar at rstar: k'*z
-    # pragma omp parallel for private(i) reduction(+:fstar)
     for (i = 0; i < n; i ++)
     {
         fstar += k[i] * z[i];
@@ -165,84 +124,130 @@ double compute_fstar(vector<double> &k, vector<double> &z)
     return fstar;    
 }
 
-void print_array(vector<double> &array)
+void print_array(double * array, int n)
 {
-    for (size_t i = 0; i < array.size(); i++)
+    for (int i = 0; i < n; i++)
     {
-        cout << array[i] << " ";
+        printf("%.2f", array[i]);
+        printf(" ");
     }
-    cout << endl;
+    printf("\n");
 }
 
-void print_matrix(vector<vector<double>> &matrix)
+void print_matrix(double * matrix, int m, int n)
 {
-    for (size_t i = 0; i < matrix.size(); i++)
+    for (int i = 0; i < m; i++)
     {
-        cout << endl;
-        for (size_t j = 0; j < matrix[0].size(); j++)
+        printf("\n");
+        for (int j = 0; j < n; j++)
         {
-            cout << matrix[i][j] << " ";
+            printf("%.2f ", matrix[i*m + j]);
         }
     }
-    cout << endl
-         << endl;
+    printf("\n\n");
 }
 
 int main(int argc, char** argv) 
 {
-    srand(time(0));
 
-    int m = 4;
-    vector<double> rstar;
+	// Host Data
+	double * hGx;  // host grid x-coordinate array
+	double * hGy;  // host grid y-coordinate array
+	double * hA;  // host tI+K
+	double * hLU; // host LU factorization of A
+	
+	
+	double * hf;// host observed data vector f
+	double * hk;// host vector k
+	double * hz;// host triangular systems solution
+
+    
+
+	// Grid size m, grid points n
+    int m = 4, n;
+
+    // Coordinate of r*
+    double * rstar;
+    rstar = (double *) malloc(2 * sizeof(double));
+    
+    // Timing variables
+    float LU_time, solver_time, total_time, LU_floats, solver_floats;
+    struct timespec cpu_start, cpu_stop; // CPU timing variables
+    float time_array[10];
+
+    // Other variables
+    double fstar;
+    int size;
+
+	// Check input    
     if (argc > 3){
-        m = stoi(argv[1]);
-        rstar.push_back(stod(argv[2]));
-        rstar.push_back(stod(argv[3]));
+        m = atoi(argv[1]);
+        rstar[0] = atof(argv[2]);
+        rstar[1] = atof(argv[3]);
+        printf("r*=(%lf, %lf)\n", rstar[0], rstar[1]);
     }else{
-        cout << "Please indicate grid size and coordinate of r*" << endl;
+        // cout << "Please indicate grid size and coordinate of r*" << endl;
+        printf("Please indicate grid size and coordinate of r*");
+
         return -1;
     }
+    
+    // Allocate host coordinate arrays
+    n = m * m;
+    size = n * sizeof(double);
+    hGx = (double *) malloc(size);
+    hGy = (double *) malloc(size);
+    hf = (double *) malloc(size); 
+    hk = (double *) malloc(size);
+    hz = (double *) malloc(size);
+    size = n * n * sizeof(double);
+    hA = (double *) malloc(size);
+    hLU = (double *) malloc(size);
+    printf("Allocate host coordinate arrays\n");
 
-    vector<vector<double>> XY, A, LU;     
-    vector<double> f, k, z;    
-    double fstar, start, LU_time, solver_time, total_time, LU_floats, solver_floats; 
     
-    XY = init_grid_points(m);//x and y coordinates of grid points
-    //cout << "XY:" << endl;
-    //print_matrix(XY);
+    init_grid_points(hGx, hGy, m);
+    printf("x and y coordinates of grid points\n");
+    print_array(hGx, n);
+    print_array(hGy, n);
     
-    f = init_observed_data_vector(XY);//observed data vector f
-    //cout << "f:" << endl;
-    //print_array(f);
+    srand(time(0));
+    init_observed_data_vector(hf, hGx, hGy, n);
+    printf("observed data vector f\n");
+    print_array(hf, n);
     
-    A = compute_A(XY);//tI+K
-    //cout << "A:" << endl;
-    //print_matrix(A);
+    compute_A(hA, hGx, hGy, n);//tI+K
+    printf("compute_A\n");
+    print_matrix(hA, n, n);
     
-    k = compute_k(XY, rstar);
-    //cout << "k:" << endl;
-    //print_array(k); 
+    compute_k(hk, hGx, hGy, rstar, n);
+    printf("compute_k\n");
+    print_array(hk, n);
     
-    double n = XY.size();
-    LU_floats = n*(n-1)*(4*n+1)/6;
-    solver_floats = n*(4+n);
-    start = omp_get_wtime();
-    LU = compute_LU_factors(A); //LU factorization of A
-    //cout << "LU:" <<endl;
-    //print_matrix(LU);
-    LU_time = omp_get_wtime()-start;
-
-    start = omp_get_wtime(); 
-    z = solve_triangular_systems(LU, f);
-    //cout << "z:" << endl;
-    //print_array(z); 
-    solver_time = omp_get_wtime()-start;
+    
+    // double n = XY.size();
+    // LU_floats = n*(n-1)*(4*n+1)/6;
+    // solver_floats = n*(4+n);
+    // start = omp_get_wtime();
+    clock_gettime(CLOCK_REALTIME, &cpu_start);
+    
+    compute_LU_factors(hA, n); //LU factorization of A
+    printf("LU factorization of A\n");
+    clock_gettime(CLOCK_REALTIME, &cpu_stop);
+    LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
+    
+    print_matrix(hA, n, n);
+ 
+    clock_gettime(CLOCK_REALTIME, &cpu_start); 
+    solve_triangular_systems(hz, hA, hf, n);
+    clock_gettime(CLOCK_REALTIME, &cpu_stop);
+    solver_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
     total_time = LU_time + solver_time;
+    printf("solve_triangular_systems\n");
+     print_array(hz, n);
     
-    fstar = compute_fstar(k, z);
-    cout << "Total time = " << total_time << " seconds, ";
-    cout << "Predicted value = " << fstar;
-        
-    cout << endl;
+    fstar = compute_fstar(hk, hz, n);
+    printf("Total time = %lf seconds, Predicted value = %lf\n", total_time, fstar);
+
     return 0;
 }
