@@ -21,7 +21,7 @@ void init_observed_data_vector(double * f, double * x, double * y, int size)
 {
     for (int i = 0; i < size; i++)
     {
-        f[i] = 1.0 - pow(x[i] - 0.5, 2) - pow(y[i] - 0.5, 2) + 0.1 * (drand48() - 0.5);
+        f[i] = 1.0 - pow(x[i] - 0.5, 2) - pow(y[i] - 0.5, 2) + 0.1 * ((double)rand() / (double)RAND_MAX - 0.5);
     }
 }
 
