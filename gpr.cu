@@ -86,14 +86,9 @@ void compute_LU_factors(double * A, int n)
 {
     int k, i, j;
     double m;
-    // for (i = 0; i < n; i ++){
-    //     LU[i * n] = A[i * n];
-    //     LU[i] = A[i];
-    // }
 
     for (k = 0; k < n - 1; k ++)
     {
-        // # pragma omp parallel for shared(A) private(i, j, m) proc_bind(close) 
         for (i = k + 1; i < n; i ++)
         {
             m = A[i*n + k] / A[k*n + k];
@@ -391,5 +386,16 @@ int main(int argc, char** argv)
     fstar = compute_fstar(hk, hz, n);
     printf("Total time = %lf seconds, Predicted value = %lf\n", total_time, fstar);
 
+    cudaFree(df);
+    cudaFree(dz);
+    cudaFree(dA);
+
+    free(hGx);
+    free(hGy);
+    free(hA);
+    free(hf);
+    free(hk);
+    free(hz);
+    
     return 0;
 }
