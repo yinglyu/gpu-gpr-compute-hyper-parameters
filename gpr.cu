@@ -354,7 +354,7 @@ int main(int argc, char** argv)
     total_time = LU_time + solver_time;
      
     fstar = compute_fstar(hk, hz, n);
-    printf("Total time = %lf seconds, Predicted value = %lf\n", total_time, fstar);
+    printf("Total time = %f ms, Predicted value = %lf\n", total_time, fstar);
 
     // Invoke kernel
     int threads = 192;
@@ -384,7 +384,7 @@ int main(int argc, char** argv)
     total_time = LU_time + solver_time;
      
     fstar = compute_fstar(hk, hz, n);
-    printf("Total time = %lf seconds, Predicted value = %lf\n", total_time, fstar);
+    printf("Total time = %f ms, Predicted value = %lf\n", total_time, fstar);
 
     cudaFree(df);
     cudaFree(dz);
