@@ -333,35 +333,13 @@ int main(int argc, char** argv)
     cudaMalloc(&dA, size);
     cudaMemcpy(dA, hA, size, cudaMemcpyHostToDevice);
 
-    clock_gettime(CLOCK_REALTIME, &cpu_start);
-    compute_LU_factors(hA, n); //LU factorization of A
-    clock_gettime(CLOCK_REALTIME, &cpu_stop);
-    LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
-    LU_FLOPS = LU_floats/LU_time;
-    printf("LU factorization of A\n");
-    printf("LU_FLOPS = %f\n", LU_FLOPS);
-    print_matrix(hA, n, n);
-
-    clock_gettime(CLOCK_REALTIME, &cpu_start); 
-    solve_triangular_systems(hz, hA, hf, n);
-    clock_gettime(CLOCK_REALTIME, &cpu_stop);
-    solver_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
-    solver_FLOPS = solver_floats/solver_time;
-    printf("solve_triangular_systems\n");
-    printf("solver_FLOPS = %f\n", solver_FLOPS);
-    print_array(hz, n);
-
-    total_time = LU_time + solver_time;
-     
-    fstar = compute_fstar(hk, hz, n);
-    printf("Total time = %f ms, Predicted value = %lf\n", total_time, fstar);
-
     // Invoke kernel
     int threads = 192;
 
     cudaEventRecord(start, 0); 
     compute_LU_factors<<<1, threads, threads * sizeof(double)>>>(threads, dA, n);
     cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
     cudaEventElapsedTime(&LU_time, start, stop);
     size = n * n * sizeof(double);
     cudaMemcpy(hA, dA, size, cudaMemcpyDeviceToHost);
@@ -373,6 +351,7 @@ int main(int argc, char** argv)
     cudaEventRecord(start, 0); 
     solve_triangular_systems<<<1, threads, threads * sizeof(double)>>>(threads, dz, dA, df, n);
     cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
     cudaEventElapsedTime(&solver_time, start, stop);
     size = n * sizeof(double);
     cudaMemcpy(hz, dz, size, cudaMemcpyDeviceToHost);
@@ -419,6 +398,9 @@ int main(int argc, char** argv)
     free(hf);
     free(hk);
     free(hz);
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
     
     return 0;
 }
