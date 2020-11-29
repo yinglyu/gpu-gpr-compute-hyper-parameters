@@ -136,6 +136,45 @@ void solve_triangular_systems(double * z, double * A, double * f, int n)
     }
 }
 
+__global__ void solve_triangular_systems(int N, double * z, double * A, double * f, int n)
+{
+    extern __shared__ double partial_sum[];
+    int i, j;
+    //Solve Az = f by LUz = f
+    //1. Solve Ly = f for y
+    for (i = 0; i < n; i ++)
+    {
+        partial_sum[threadIdx.x] = 0;
+        for (j = threadIdx.x; j < i; j += N)
+        {
+            partial_sum[threadIdx.x] += A[i*n + j] * z[j];
+        }
+        sum (partial_sum, (N<i)?N:i);
+        if (threadIdx.x == 0){
+            z[i] = f[i] - partial_sum[0];
+        }
+        __syncthreads();
+    }
+    __syncthreads();
+    
+    //2. Solve Uz = y for z
+    for (i = n - 1; i >= 0; i --)
+    {
+        partial_sum[threadIdx.x] = 0;
+        for (j = i + 1 + threadIdx.x; j < n; j += N)
+        {
+            partial_sum[threadIdx.x] += A[i*n + j] * z[j];
+        }
+        __syncthreads();
+        sum(partial_sum, (N < (n-1-i))? N:(n-1-i));
+        if(threadIdx.x == 0) {
+            z[i] = (z[i]-partial_sum[0])/A[i*n + i];
+        }
+        __syncthreads();
+    }
+    return;
+}
+
 double compute_fstar(double * k, double * z, int n)
 {
     int i;
@@ -183,6 +222,17 @@ int main(int argc, char** argv)
 	double * hk;// host vector k
 	double * hz;// host triangular systems solution
 
+	// Device Data
+	// double * dGx;  // device grid x-coordinate array
+	// double * dGy;  // device grid y-coordinate array
+	double * dA;  // device tI+K
+	//double * hLU; // device LU factorization of A
+	
+	double * df;// device observed data vector f
+	// double * dk;// device vector k
+	double * dz;// device triangular systems solution
+
+
 	// Grid size m, grid points n
     int m = 4, n;
 
@@ -192,11 +242,16 @@ int main(int argc, char** argv)
     
     // Timing variables
     float LU_time, solver_time, total_time, LU_floats, solver_floats, LU_FLOPS, solver_FLOPS;
+    cudaEvent_t start, stop; // GPU timing variables
     struct timespec cpu_start, cpu_stop; // CPU timing variables
 
     // Other variables
     double fstar;
     int size;
+
+    // Timing initializations
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
 
 	// Check input    
     if (argc > 3){
@@ -242,19 +297,28 @@ int main(int argc, char** argv)
     printf("compute_k\n");
     print_array(hk, n);
     
-    double N = (double) n;
-    LU_floats = N*(N-1)*(4*N+1)/6;
-    solver_floats = N*(4+N);
+    LU_floats = n*(n-1)*(4*n+1);
+    LU_floats /= 6;
+    solver_floats = n*(4+n);
+
     clock_gettime(CLOCK_REALTIME, &cpu_start);
-    
     compute_LU_factors(hA, n); //LU factorization of A
-   clock_gettime(CLOCK_REALTIME, &cpu_stop);
+    clock_gettime(CLOCK_REALTIME, &cpu_stop);
     LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
     LU_FLOPS = LU_floats/LU_time;
     printf("LU factorization of A\n");
     printf("LU_FLOPS = %f\n", LU_FLOPS);
     print_matrix(hA, n, n);
  
+    // Allocate device coordinate arrays
+    size = n * sizeof(double);
+    cudaMalloc(&df, size);
+    cudaMemcpy(df, hf, size, cudaMemcpyHostToDevice);
+    cudaMalloc(&dz, size);
+    size = n * n * sizeof(double);
+    cudaMalloc(&dA, size);
+    cudaMemcpy(dA, hA, size, cudaMemcpyHostToDevice);
+
     clock_gettime(CLOCK_REALTIME, &cpu_start); 
     solve_triangular_systems(hz, hA, hf, n);
     clock_gettime(CLOCK_REALTIME, &cpu_stop);
@@ -262,6 +326,23 @@ int main(int argc, char** argv)
     solver_FLOPS = solver_floats/solver_time;
     printf("solve_triangular_systems\n");
     printf("solver_FLOPS = %f\n", solver_FLOPS);
+    print_array(hz, n);
+
+    total_time = LU_time + solver_time;
+     
+    fstar = compute_fstar(hk, hz, n);
+    printf("Total time = %lf seconds, Predicted value = %lf\n", total_time, fstar);
+
+    // Invoke kernel
+    int threads = 192;
+
+    cudaEventRecord(start, 0); 
+    solve_triangular_systems<<<1, threads, threads * sizeof(double)>>>(threads, dz, dA, df, n);
+    cudaEventRecord(stop, 0);
+    cudaEventElapsedTime(&solver_time, start, stop);
+    size = n * sizeof(double);
+    cudaMemcpy(hz, dz, size, cudaMemcpyDeviceToHost);
+
     print_array(hz, n);
     
     total_time = LU_time + solver_time;
