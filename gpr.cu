@@ -111,22 +111,15 @@ __global__ void compute_LU_factors(int N, double * A, int n)
         for (i = k + 1; i < n; i ++)
         {
             m = A[i*n + k] / A[k*n + k];
-            partial_sum[threadIdx.x] = 0;
             for (j = k + 1 + threadIdx.x; j < n; j += N)
             {
-                partial_sum[threadIdx.x] += m * A[k*n + j];
+                A[i*n + j] = A[i*n + j] - m * A[k*n + j];
             }
-            __syncthreads();
-            sum(partial_sum, (N < (k-1-i))? N:(k-1-i));
-            if(threadIdx.x == 0) {
-                A[i*n + j] = A[i*n + j] - partial_sum[threadIdx.x];
-            }
-            __syncthreads();
             A[i*n + k] = m;
             __syncthreads();
         }
-        __syncthreads();
     }
+    return;
 }
 
 void solve_triangular_systems(double * z, double * A, double * f, int n)
