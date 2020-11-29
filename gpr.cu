@@ -380,7 +380,30 @@ int main(int argc, char** argv)
     printf("solve_triangular_systems\n");
     printf("solver_FLOPS = %f\n", solver_FLOPS);
     print_array(hz, n);
+
+    total_time = LU_time + solver_time;
     
+    fstar = compute_fstar(hk, hz, n);
+    printf("Total time = %f ms, Predicted value = %lf\n", total_time, fstar);
+
+    clock_gettime(CLOCK_REALTIME, &cpu_start);
+    compute_LU_factors(hA, n); //LU factorization of A
+    clock_gettime(CLOCK_REALTIME, &cpu_stop);
+    LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
+    LU_FLOPS = LU_floats/LU_time;
+    printf("LU factorization of A\n");
+    printf("LU_FLOPS = %f\n", LU_FLOPS);
+    print_matrix(hA, n, n);
+
+    clock_gettime(CLOCK_REALTIME, &cpu_start); 
+    solve_triangular_systems(hz, hA, hf, n);
+    clock_gettime(CLOCK_REALTIME, &cpu_stop);
+    solver_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
+    solver_FLOPS = solver_floats/solver_time;
+    printf("solve_triangular_systems\n");
+    printf("solver_FLOPS = %f\n", solver_FLOPS);
+    print_array(hz, n);
+
     total_time = LU_time + solver_time;
      
     fstar = compute_fstar(hk, hz, n);
