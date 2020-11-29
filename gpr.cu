@@ -239,7 +239,7 @@ int main(int argc, char** argv)
 	double * hGx;  // host grid x-coordinate array
 	double * hGy;  // host grid y-coordinate array
 	double * hA;  // host tI+K
-	//double * hLU; // host LU factorization of A
+	double * hLU; // host LU factorization of A
 	
 	double * hf;// host observed data vector f
 	double * hk;// host vector k
@@ -299,7 +299,7 @@ int main(int argc, char** argv)
     hz = (double *) malloc(size);
     size = n * n * sizeof(double);
     hA = (double *) malloc(size);
-    //hLU = (double *) malloc(size);
+    hLU = (double *) malloc(size);
     printf("Allocate host coordinate arrays\n");
     
     init_grid_points(hGx, hGy, m);
@@ -342,11 +342,11 @@ int main(int argc, char** argv)
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&LU_time, start, stop);
     size = n * n * sizeof(double);
-    cudaMemcpy(hA, dA, size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(hLU, dA, size, cudaMemcpyDeviceToHost);
     LU_FLOPS = LU_floats/LU_time;
     printf("LU factorization of A\n");
     printf("LU_FLOPS = %f\n", LU_FLOPS);
-    print_matrix(hA, n, n);
+    print_matrix(hLU, n, n);
 
     cudaEventRecord(start, 0); 
     solve_triangular_systems<<<1, threads, threads * sizeof(double)>>>(threads, dz, dA, df, n);
@@ -395,6 +395,7 @@ int main(int argc, char** argv)
     free(hGx);
     free(hGy);
     free(hA);
+    free(hLU);
     free(hf);
     free(hk);
     free(hz);
