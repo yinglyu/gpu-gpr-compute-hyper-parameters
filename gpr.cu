@@ -106,6 +106,34 @@ void compute_LU_factors(double * A, int n)
     }
 }
 
+__global__ void compute_LU_factors(int N, double * A, int n)
+{
+    extern __shared__ double partial_sum[];
+    int k, i, j;
+    double m;
+    for (k = 0; k < n - 1; k ++)
+    {
+        for (i = k + 1; i < n; i ++)
+        {
+            m = A[i*n + k] / A[k*n + k];
+            partial_sum[threadIdx.x] = 0;
+            for (j = k + 1 + threadIdx.x; j < n; j += N)
+            {
+                partial_sum[threadIdx.x] += m * A[k*n + j];
+            }
+            __syncthreads();
+            sum(partial_sum, (N < (k-1-i))? N:(k-1-i));
+            if(threadIdx.x == 0) {
+                A[i*n + j] = A[i*n + j] - partial_sum[threadIdx.x];
+            }
+            __syncthreads();
+            A[i*n + k] = m;
+            __syncthreads();
+        }
+        __syncthreads();
+    }
+}
+
 void solve_triangular_systems(double * z, double * A, double * f, int n)
 {
     int i, j;
@@ -301,15 +329,6 @@ int main(int argc, char** argv)
     LU_floats /= 6;
     solver_floats = n*(4+n);
 
-    clock_gettime(CLOCK_REALTIME, &cpu_start);
-    compute_LU_factors(hA, n); //LU factorization of A
-    clock_gettime(CLOCK_REALTIME, &cpu_stop);
-    LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
-    LU_FLOPS = LU_floats/LU_time;
-    printf("LU factorization of A\n");
-    printf("LU_FLOPS = %f\n", LU_FLOPS);
-    print_matrix(hA, n, n);
- 
     // Allocate device coordinate arrays
     size = n * sizeof(double);
     cudaMalloc(&df, size);
@@ -318,6 +337,15 @@ int main(int argc, char** argv)
     size = n * n * sizeof(double);
     cudaMalloc(&dA, size);
     cudaMemcpy(dA, hA, size, cudaMemcpyHostToDevice);
+
+    clock_gettime(CLOCK_REALTIME, &cpu_start);
+    compute_LU_factors(hA, n); //LU factorization of A
+    clock_gettime(CLOCK_REALTIME, &cpu_stop);
+    LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
+    LU_FLOPS = LU_floats/LU_time;
+    printf("LU factorization of A\n");
+    printf("LU_FLOPS = %f\n", LU_FLOPS);
+    print_matrix(hA, n, n);
 
     clock_gettime(CLOCK_REALTIME, &cpu_start); 
     solve_triangular_systems(hz, hA, hf, n);
@@ -337,12 +365,25 @@ int main(int argc, char** argv)
     int threads = 192;
 
     cudaEventRecord(start, 0); 
+    compute_LU_factors<<<1, threads, threads * sizeof(double)>>>(threads, dA, n);
+    cudaEventRecord(stop, 0);
+    cudaEventElapsedTime(&LU_time, start, stop);
+    size = n * n * sizeof(double);
+    cudaMemcpy(hA, dA, size, cudaMemcpyDeviceToHost);
+    LU_FLOPS = LU_floats/LU_time;
+    printf("LU factorization of A\n");
+    printf("LU_FLOPS = %f\n", LU_FLOPS);
+    print_matrix(hA, n, n);
+
+    cudaEventRecord(start, 0); 
     solve_triangular_systems<<<1, threads, threads * sizeof(double)>>>(threads, dz, dA, df, n);
     cudaEventRecord(stop, 0);
     cudaEventElapsedTime(&solver_time, start, stop);
     size = n * sizeof(double);
     cudaMemcpy(hz, dz, size, cudaMemcpyDeviceToHost);
-
+    solver_FLOPS = solver_floats/solver_time;
+    printf("solve_triangular_systems\n");
+    printf("solver_FLOPS = %f\n", solver_FLOPS);
     print_array(hz, n);
     
     total_time = LU_time + solver_time;
