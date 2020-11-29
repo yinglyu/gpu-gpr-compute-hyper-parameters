@@ -3,6 +3,31 @@
 #include <time.h>
 #include <math.h>
 
+__device__ int count;
+
+__device__ void sum(double *partial_sum, int dummy) {
+    if(threadIdx.x == 0) {
+        count = dummy;
+        if(count %2 != 0) {
+            count++;
+            partial_sum[count-1] = 0;
+        }
+    }
+    __syncthreads();
+    for(int i = count/2; i > 0; i = i/2) {
+        if(threadIdx.x < i)
+            partial_sum[threadIdx.x] += partial_sum[threadIdx.x + i];
+        __syncthreads();
+        if(threadIdx.x == 0) {
+            if(i%2 != 0 && i != 1) {
+                partial_sum[0] += partial_sum[--i];
+            }
+        }
+        __syncthreads();
+    }
+    __syncthreads();
+    return;
+}
 
 void init_grid_points(double * x, double * y, int m)
 {
