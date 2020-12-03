@@ -103,21 +103,22 @@ void compute_LU_factors(double * A, int n)
 
 __global__ void compute_LU_factors(int N, double * A, int n)
 {
-    extern __shared__ double partial_sum[];
     int k, i, j;
-    double m;
+    int m;
     for (k = 0; k < n - 1; k ++)
     {
-        for (i = k + 1; i < n; i ++)
+        for (i = k + 1 + threadIdx.x; i < n; i += N)
         {
-            m = A[i*n + k] / A[k*n + k];
-            for (j = k + 1 + threadIdx.x; j < n; j += N)
-            {
-                A[i*n + j] = A[i*n + j] - m * A[k*n + j];
-            }
-            A[i*n + k] = m;
-            __syncthreads();
+            A[i*n + k] = A[i*n + k] / A[k*n + k];
         }
+        __syncthreads();
+        for (m = threadIdx.x; m < (n - k - 1)*(n - k - 1); m += N )
+        {
+        	i = k + 1 + m / (n - k - 1);
+        	j = k + 1 + m % (n - k - 1);
+        	A[i*n + j] -=  A[i*n + k] * A[k*n + j];
+        }
+        __syncthreads();
     }
     return;
 }
