@@ -259,9 +259,7 @@ int main(int argc, char** argv)
     
     // Timing variables
     float LU_time, solver_time, total_time;
-    // long double LU_floats, solver_floats, LU_FLOPS, solver_FLOPS;
     cudaEvent_t start, stop; // GPU timing variables
-    // struct timespec cpu_start, cpu_stop; // CPU timing variables
 
     // Other variables
     double fstar;
@@ -315,9 +313,9 @@ int main(int argc, char** argv)
     // printf("compute_k\n");
     // print_array(hk, n);
     
-    LU_floats = n*(n-1)*(4*n+1);
-    LU_floats /= 6;
-    solver_floats = n*(4+n);
+    // LU_floats = n*(n-1)*(4*n+1);
+    // LU_floats /= 6;
+    // solver_floats = n*(4+n);
 
     // Allocate device coordinate arrays
     size = n * sizeof(double);
@@ -339,11 +337,8 @@ int main(int argc, char** argv)
     cudaEventElapsedTime(&LU_time, start, stop);
     size = n * n * sizeof(double);
     cudaMemcpy(hLU, dA, size, cudaMemcpyDeviceToHost);
-    LU_FLOPS = LU_floats/(LU_time/1000.0);
-    // printf("LU factorization of A\n");
-    // printf("LU_FLOPS = %llf\n", LU_FLOPS);//(1024.0*1024*1024)
-    // print_matrix(hLU, n, n);
 
+    printf("LU time = %f ms\n", LU_time);
     cudaEventRecord(start, 0); 
     solve_triangular_systems<<<1, threads, threads * sizeof(double)>>>(threads, dz, dA, df, n);
     cudaEventRecord(stop, 0);
@@ -351,39 +346,14 @@ int main(int argc, char** argv)
     cudaEventElapsedTime(&solver_time, start, stop);
     size = n * sizeof(double);
     cudaMemcpy(hz, dz, size, cudaMemcpyDeviceToHost);
-    solver_FLOPS = solver_floats/(solver_time/1000.0);
-    // printf("solve_triangular_systems\n");
-    // printf("solver_FLOPS = %llf\n", solver_FLOPS);//(1024.0*1024*1024)
-    // print_array(hz, n);
+
+    printf("Solver time = %f ms\n", solver_time);
 
     total_time = LU_time + solver_time;
     
     fstar = compute_fstar(hk, hz, n);
     printf("Total time = %f ms, Predicted value = %lf\n", total_time, fstar);
 
-    // printf("CPU version\n");
-    // clock_gettime(CLOCK_REALTIME, &cpu_start);
-    // compute_LU_factors(hA, n); //LU factorization of A
-    // clock_gettime(CLOCK_REALTIME, &cpu_stop);
-    // LU_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
-    // LU_FLOPS = LU_floats/(LU_time/1000.0);
-    // printf("LU factorization of A\n");
-    // printf("LU_FLOPS = %llf\n", LU_FLOPS);//
-    // print_matrix(hA, n, n);
-
-    // clock_gettime(CLOCK_REALTIME, &cpu_start); 
-    // solve_triangular_systems(hz, hA, hf, n);
-    // clock_gettime(CLOCK_REALTIME, &cpu_stop);
-    // solver_time = 1000*((cpu_stop.tv_sec-cpu_start.tv_sec) + 0.000000001*(cpu_stop.tv_nsec-cpu_start.tv_nsec));
-    // solver_FLOPS = solver_floats/(solver_time/1000.0);
-    // printf("solve_triangular_systems\n");
-    // printf("solver_FLOPS = %llf\n", solver_FLOPS);
-    // print_array(hz, n);
-
-    // total_time = LU_time + solver_time;
-     
-    // fstar = compute_fstar(hk, hz, n);
-    // printf("Total time = %f ms, Predicted value = %lf\n", total_time, fstar);
 
     cudaFree(df);
     cudaFree(dz);
