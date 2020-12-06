@@ -2,6 +2,11 @@
 #include <stdlib.h>
 #include <time.h>
 #include <math.h>
+#include <float.h>
+
+#ifndef M_PI
+#    define M_PI 3.14159265358979323846
+#endif
 
 __device__ int count;
 
@@ -42,30 +47,49 @@ void init_grid_points(double * x, double * y, int m)
     }
 }
 
-void init_observed_data_vector(double * f, double * x, double * y, int size)
+void init_observed_data_vector(double * f, double * x, double * y, int m)
 {
-    for (int i = 0; i < size; i++)
+    double l[2] = {(double)2/m, (double)2/m};
+    int n = m * m;
+    //kernel(f, x, y, l, n);
+    for (int i = 0; i < n; i ++)
     {
-        f[i] = 1.0 - pow(x[i] - 0.5, 2) - pow(y[i] - 0.5, 2) + 0.1 * ((double)rand() / (double)RAND_MAX - 0.5);
+        f[i] = 0.02 * ((double)rand() / (double)RAND_MAX - 0.5);
+        double d = pow((x[i] - 0.25)/l[0], 2) + pow((y[i] - 0.25)/l[1],2);
+        f[i] += 1.0/sqrt(2.0*M_PI) *exp(-d/2);
+        f[i] += x[i] * 0.2 + y[i] * 0.1;
+    } 
+}
+
+void randperm(int * r, int n){
+    for(int i = 0; i < n; i ++){
+        r[i] = i;
+    }
+    for (int i = n - 1; i >= 0; i --){
+        int j = rand() % (i + 1);
+        int temp = r[i];
+        r[i] = r[j];
+        r[j] = temp;
     }
 }
 
-void compute_A( double * A, double * x, double * y, int n)
-{
-    int i, j;
-    double d, t;
-    //Initialize K
-    for (i = 0; i < n; i ++)
-    {
-        for (j = 0; j < n; j++)
-        {
-            d = pow(x[i] - x[j], 2) + pow(y[i] - y[j],2);
-            A[i*n + j] = exp(-d);
-        }
+void init_data_set_indices(int * itest, int * itrain, int ntest, int ntrain){
+    int n = ntest + ntrain;
+    int * r = (int *) malloc(n * sizeof(int));
+    randperm(r, n);
+    for (int i = 0; i < ntest; i ++){
+        itest[i] = r[i];
     }
+    for (int i = 0; i < ntrain; i ++){
+        itrain[i] = r[ntest + i];
+    }
+    free(r);
+}
+
+void compute_A(double * A, double t, int n)//tI + K
+{
     //Compute A = tI+K
-    t = 0.01;
-    for (i = 0; i < n; i ++)
+    for (int i = 0; i < n; i ++)
     {
         A[i*n + i] += t;
     }
@@ -123,7 +147,7 @@ __global__ void compute_LU_factors(int N, double * A, int n)
     return;
 }
 
-void solve_triangular_systems(double * z, double * A, double * f, int n)
+void solve_triangular_systems(double * z, double * A, double * f, int * itrain, int n)
 {
     int i, j;
     double m; 
@@ -137,7 +161,7 @@ void solve_triangular_systems(double * z, double * A, double * f, int n)
             m += A[i*n + j] * z[j];
         }
 
-        z[i] = f[i] - m;
+        z[i] = f[itrain[i]] - m;
     }
     
     //2. Solve Uz = y for z
@@ -205,11 +229,45 @@ double compute_fstar(double * k, double * z, int n)
     return fstar;    
 }
 
+void compute_ftest(double * ftest, double * k, double * z, int ntrain, int ntest)
+{
+    // Compute predicted value ftest at itest array: kT*z
+    for (int i = 0; i < ntest; i ++)
+    {
+        ftest[i] = 0;
+        for (int j = 0; j < ntrain; j ++){
+            ftest[i] += k[i * ntrain + j] * z[j];
+        }
+    }
+}
+
+void compute_kernel(double * K, double * x, double * y, double * l, int n)
+{
+    for (int i = 0; i < n; i ++)
+    {
+        for (int j = 0; j < n; j++)
+        {
+            double d = pow((x[i] - x[j])/l[0], 2) + pow((y[i] - y[j])/l[1],2);
+            K[i*n + j] = 1.0/sqrt(2.0*M_PI) * exp(-d/2);
+        }
+    } 
+}
+
+void extract_K(double * K0, double * K, int * i1, int * i2, int n, int n1, int n2){
+    for (int i = 0; i < n1; i ++)
+    {
+        for (int j = 0; j < n2; j++)
+        {
+            K[i * n1 + j] = K0[i1[i] * n + i2[j]];
+        }
+    }
+}
+
 void print_array(double * array, int n)
 {
     for (int i = 0; i < n; i++)
     {
-        printf("%.2f ", array[i]);
+        printf("%.4f ", array[i]);
     }
     printf("\n");
 }
@@ -220,11 +278,59 @@ void print_matrix(double * matrix, int m, int n)
     {
         for (int j = 0; j < n; j++)
         {
-            printf("%.2f ", matrix[i*m + j]);
+            printf("%.4f ", matrix[i*m + j]);
         }
         printf("\n");
     }
 }
+
+void GPR(double * ftest, double * x, double * y, double * f, int * itest, int * itrain, double t, double * l, int n, int ntest)
+{
+    double * K0;
+    double * LU;
+    // double * k;
+    double * kT;
+    double * z;
+    
+    
+    int ntrain = n - ntest;
+    K0 = (double *) malloc(n * n * sizeof(double));
+    
+    //Initialize K for all points (including test and training points)
+    compute_kernel(K0, x, y, l, n);
+    
+    //Extract training set K
+    LU = (double *) malloc(ntrain * ntrain * sizeof(double));
+    extract_K(K0, LU, itrain, itrain, n, ntrain, ntrain);
+    
+    compute_A(LU, t, ntrain);//tI + K
+    
+    compute_LU_factors(LU, ntrain);
+
+    kT = (double *) malloc(ntest * ntrain * sizeof(double));
+    extract_K(K0, kT, itest, itrain, n, ntest, ntrain);
+
+    z = (double *) malloc(ntrain * sizeof(double));
+    solve_triangular_systems(z, LU, f, itrain, ntrain);
+   
+    compute_ftest(ftest, kT, z, ntrain, ntest);
+
+    free(K0);
+    free(LU);
+    free(kT);
+    free(z);
+}
+
+double compute_MSE(double * f, int * itest, double * ftest, int ntest) // compute the mean square error
+{
+    double squareError = 0;
+    for (int i = 0; i < ntest; i ++){
+        squareError += pow(f[itest[i]] - ftest[i], 2);
+    }
+    return squareError / ntest;
+}
+
+
 
 int main(int argc, char** argv) 
 {
@@ -232,53 +338,38 @@ int main(int argc, char** argv)
 	// Host Data
 	double * hGx;  // host grid x-coordinate array
 	double * hGy;  // host grid y-coordinate array
-	double * hA;  // host tI+K
-	double * hLU; // host LU factorization of A
-	
 	double * hf;// host observed data vector f
-	double * hk;// host vector k
-	double * hz;// host triangular systems solution
+    int * hitest; // Indices of test points (randomly chosen)
+    int * hitrain; //Indices of training points
 
-	// Device Data
-	// double * dGx;  // device grid x-coordinate array
-	// double * dGy;  // device grid y-coordinate array
-	double * dA;  // device tI+K
-	//double * hLU; // device LU factorization of A
-	
-	double * df;// device observed data vector f
-	// double * dk;// device vector k
-	double * dz;// device triangular systems solution
+	// Grid size m, grid points n, size of test data and training data, 
+    int m = 4, n, ntest, ntrain;
 
+    // Coordinate of hyper-parameter l(l1, l2)
+    double l[2], bestL[2];
 
-	// Grid size m, grid points n
-    int m = 4, n;
-
-    // Coordinate of r*
-    double * rstar;
-    rstar = (double *) malloc(2 * sizeof(double));
+    // predicted value of test
+    double * ftest;
     
     // Timing variables
-    float LU_time, solver_time, total_time;
-    cudaEvent_t start, stop; // GPU timing variables
+    // cudaEvent_t start, stop; // GPU timing variables
 
     // Other variables
-    double fstar;
+    // double fstar;
+    double Lparam[20];
+    double MSE[20][20];
     int size;
+    double minMSE = DBL_MAX;
 
     // Timing initializations
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
+    // cudaEventCreate(&start);
+    // cudaEventCreate(&stop);
 
 	// Check input    
-    if (argc > 3){
+    if (argc > 1){
         m = atoi(argv[1]);
-        rstar[0] = atof(argv[2]);
-        rstar[1] = atof(argv[3]);
-        printf("r*=(%lf, %lf)\n", rstar[0], rstar[1]);
     }else{
-        // cout << "Please indicate grid size and coordinate of r*" << endl;
-        printf("Please indicate grid size and coordinate of r*");
-
+        printf("Please indicate grid size m");
         return -1;
     }
     
@@ -288,87 +379,51 @@ int main(int argc, char** argv)
     hGx = (double *) malloc(size);
     hGy = (double *) malloc(size);
     hf = (double *) malloc(size); 
-    hk = (double *) malloc(size);
-    hz = (double *) malloc(size);
-    size = n * n * sizeof(double);
-    hA = (double *) malloc(size);
-    hLU = (double *) malloc(size);
-    // printf("Allocate host coordinate arrays\n");
+
+    ntest = (n + 9) / 10;
+    ntrain = n - ntest;
+    printf("testing data: %d, training data: %d\n", ntest, ntrain);
+    size = sizeof(int);
+    hitest = (int *) malloc(ntest * size);
+    hitrain = (int *) malloc(ntrain * size);
+    size = sizeof(double);
+    ftest = (double *) malloc(ntest * size);
+
+    for (int i = 0; i < 20; i++){
+        Lparam[i] = (i + 1)  * 0.5/ m;
+    }
     
     init_grid_points(hGx, hGy, m);
-    // printf("x and y coordinates of grid points\n");
-    // print_array(hGx, n);
-    // print_array(hGy, n);
     
     srand(time(0));
-    init_observed_data_vector(hf, hGx, hGy, n);
-    // printf("observed data vector f\n");
-    // print_array(hf, n);
+    init_observed_data_vector(hf, hGx, hGy, m);
+
+    init_data_set_indices(hitest, hitrain, ntest, ntrain);
     
-    compute_A(hA, hGx, hGy, n);//tI+K
-    // printf("compute_A\n");
-    // print_matrix(hA, n, n);
+    double t = 0.5;// Parameter t
+    for (int il1 = 0; il1 < 20; il1 ++){
+        l[0] = Lparam[il1];
+        for (int il2 = 0; il2 < 20; il2 ++){
+            l[1] = Lparam[il2];
+            GPR(ftest, hGx, hGy, hf, hitest, hitrain, t, l, n, ntest);
+            MSE[il1][il2] = compute_MSE(hf, hitest, ftest, ntest);
+            printf("Finished (l1,l2) = %f, %f, mse = %e\n", Lparam[il1], Lparam[il2], MSE[il1][il2]);
+            if (MSE[il1][il2] < minMSE){
+                bestL[0] = l[0];
+                bestL[1] = l[1];
+                minMSE = MSE[il1][il2];
+            }
+            
+        }
+    }
+    printf("Best (l1,l2) = %f, %f, mse = %e\n", bestL[0], bestL[1], minMSE);
     
-    compute_k(hk, hGx, hGy, rstar, n);
-    // printf("compute_k\n");
-    // print_array(hk, n);
-    
-    // LU_floats = n*(n-1)*(4*n+1);
-    // LU_floats /= 6;
-    // solver_floats = n*(4+n);
-
-    // Allocate device coordinate arrays
-    size = n * sizeof(double);
-    cudaMalloc(&df, size);
-    cudaMemcpy(df, hf, size, cudaMemcpyHostToDevice);
-    cudaMalloc(&dz, size);
-    size = n * n * sizeof(double);
-    cudaMalloc(&dA, size);
-    cudaMemcpy(dA, hA, size, cudaMemcpyHostToDevice);
-
-    // Invoke kernel
-    printf("GPU version\n");
-    int threads = 192;
-    printf("Number of threads %d\n", threads);
-    cudaEventRecord(start, 0); 
-    compute_LU_factors<<<1, threads>>>(threads, dA, n);
-    cudaEventRecord(stop, 0);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&LU_time, start, stop);
-    size = n * n * sizeof(double);
-    cudaMemcpy(hLU, dA, size, cudaMemcpyDeviceToHost);
-
-    printf("LU time = %f ms\n", LU_time);
-    cudaEventRecord(start, 0); 
-    solve_triangular_systems<<<1, threads, threads * sizeof(double)>>>(threads, dz, dA, df, n);
-    cudaEventRecord(stop, 0);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&solver_time, start, stop);
-    size = n * sizeof(double);
-    cudaMemcpy(hz, dz, size, cudaMemcpyDeviceToHost);
-
-    printf("Solver time = %f ms\n", solver_time);
-
-    total_time = LU_time + solver_time;
-    
-    fstar = compute_fstar(hk, hz, n);
-    printf("Total time = %f ms, Predicted value = %lf\n", total_time, fstar);
-
-
-    cudaFree(df);
-    cudaFree(dz);
-    cudaFree(dA);
 
     free(hGx);
     free(hGy);
-    free(hA);
-    free(hLU);
-    free(hf);
-    free(hk);
-    free(hz);
-
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    free(hitest);
+    free(hitrain);
+    free(ftest);
     
     return 0;
 }
