@@ -258,7 +258,7 @@ void extract_K(double * K0, double * K, int * i1, int * i2, int n, int n1, int n
     {
         for (int j = 0; j < n2; j++)
         {
-            K[i * n1 + j] = K0[i1[i] * n + i2[j]];
+            K[i * n2 + j] = K0[i1[i] * n + i2[j]];
         }
     }
 }
@@ -278,7 +278,7 @@ void print_matrix(double * matrix, int m, int n)
     {
         for (int j = 0; j < n; j++)
         {
-            printf("%.4f ", matrix[i*m + j]);
+            printf("%.4f ", matrix[i*n + j]);
         }
         printf("\n");
     }
@@ -413,7 +413,6 @@ int main(int argc, char** argv)
                 bestL[1] = l[1];
                 minMSE = MSE[il1][il2];
             }
-            
         }
     }
     printf("Best (l1,l2) = %f, %f, mse = %e\n", bestL[0], bestL[1], minMSE);
